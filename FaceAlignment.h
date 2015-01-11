@@ -24,6 +24,7 @@
 #include <numeric>
 #include <utility>
 
+const double PI = 3.1415926535898;
 
 //人脸检测程序输出的矩形
 class BoundingBox{
@@ -46,13 +47,23 @@ public:
 
 class Fern{
 public:
-    std::vector<cv::Mat_<double> > Train(const std::vector<std::vector<double> > & candidate_pixel_intensity,
+    void Train(const std::vector<std::vector<double> > & candidate_pixel_intensity,
                         const cv::Mat_<double> & covariance,
                         const cv::Mat_<double> & candidate_pixel_locations,
                         const cv::Mat_<int> & nearest_landmark_index,
-                        const std::vector<cv::Mat_<double> > & regression_targets,
-                        int fern_pixel_num);
+                        const std::vector<cv::Mat_<double> > & ground_truth_shapes,
+                        std::vector<cv::Mat_<double> > & current_shapes,
+                        const std::vector<BoundingBox> & bounding_box,
+                        const cv::Mat_<double> & mean_shape,
+                        std::vector<cv::Mat_<double> > & regression_targets,
+                        int fern_pizxel_num);
+    void Predict(const cv::Mat_<uchar> & image,
+                const BoundingBox & bounding_box,
+                const cv::Mat_<double> & mean_shape,
+                cv::Mat_<double> & shape);
+    void Read(std::ifstream & fin);
     void Write(std::ofstream & fout);
+
 
 private:
     int fern_pixel_num_;
@@ -61,13 +72,14 @@ private:
     cv::Mat_<double> threshold_;
     cv::Mat_<int> selected_pixel_index_;
     cv::Mat_<double> selected_pixel_locations_;
-    std::vector<cv::Mat_<double> > bin_output_;
+    std::vector<cv::Mat_<double> > bin_output_detShape_;
+    std::vector<double> bin_output_detTheta_;
 };
 
 class FernCascade{
 public:
-    std::vector<cv::Mat_<double> > Train(const std::vector<cv::Mat_<uchar> > & images,
-                        const std::vector<cv::Mat_<double> > & current_shapes,
+    void Train(const std::vector<cv::Mat_<uchar> > & images,
+                        std::vector<cv::Mat_<double> > & current_shapes,
                         const std::vector<cv::Mat_<double> > & ground_truth_shapes,
                         const std::vector<BoundingBox> & bounding_box,
                         const cv::Mat_<double> & mean_shape,
@@ -76,6 +88,11 @@ public:
                         int fern_pixel_num,
                         int curr_level_num,
                         int first_level_num);
+    void Predict(const cv::Mat_<uchar> & image,
+                const BoundingBox & bounding_box,
+                const cv::Mat_<double> & mean_shape,
+                cv::Mat_<double> & shape);
+    void Read(std::ifstream & fin);
     void Write(std::ofstream & fout);
 
 private:
@@ -92,6 +109,9 @@ public:
             int first_level_num, int second_level_num,
             int candidate_pixel_num, int fern_pixel_num,
             int initial_num);
+    cv::Mat_<double> Predict(const cv::Mat_<uchar> & image, const BoundingBox & bounding_box, int initial_num);
+    void Load(std::string path);
+    void Read(std::ifstream & fin);
     void Save(std::string path);
     void Write(std::ofstream & fout);
 

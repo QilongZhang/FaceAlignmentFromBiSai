@@ -9,11 +9,15 @@
 using namespace std;
 using namespace cv;
 
-vector<Mat_<double> > Fern::Train(const vector<vector<double> > & candidate_pixel_intensity,
+void Fern::Train(const vector<vector<double> > & candidate_pixel_intensity,
                     const Mat_<double> & covariance,
                     const Mat_<double> & candidate_pixel_locations,
                     const Mat_<int> & nearest_landmark_index,
-                    const vector<Mat_<double> > & regression_targets,
+                    const vector<Mat_<double> > & ground_truth_shapes,
+                    vector<Mat_<double> > & current_shapes,
+                    const vector<BoundingBox> & bounding_box,
+                    const Mat_<double> & mean_shape,
+                    vector<Mat_<double> > & regression_targets,
                     int fern_pixel_num){  
     fern_pixel_num_ = fern_pixel_num;
     landmark_num_ = regression_targets[0].rows;
@@ -113,10 +117,43 @@ vector<Mat_<double> > Fern::Train(const vector<vector<double> > & candidate_pixe
         shapes_in_bin[index].push_back(i);
     }
 
-    //计算每个bin的输出
-    vector<Mat_<double> > prediction;
-    prediction.resize(regression_targets.size());
-    bin_output_.resize(bin_num);
+    //计算每个bin的bin_output_detTheta_;
+    bin_output_detTheta_.resize(bin_num);
+    for(int i = 0; i < bin_num; ++i){
+        int bin_size = shapes_in_bin[i].size();
+        double temp = 0;
+        double scale;
+        Mat_<double> rotation;
+        for(int j = 0; j < bin_size; ++j){
+            int index = shapes_in_bin[i][j];
+            SimilarityTransform(ground_truth_shapes[index], current_shapes[index], rotation, scale);
+            temp += asin(rotation(0,1)) * 180 / PI;
+        }
+        if(bin_size == 0){
+            bin_output_detTheta_[i] = temp;
+            continue;
+        }
+        temp = (1.0 / ((1.0 + 1000.0 / bin_size) * bin_size)) * temp;
+        bin_output_detTheta_[i] = temp;
+        rotation(0, 0) = cos(temp * PI / 180);
+        rotation(0, 1) = sin(temp * PI / 180);
+        rotation(1, 0) = -sin(temp * PI / 180);
+        rotation(1, 1) = cos(temp * PI / 180);
+        //旋转角度，更改旋转后的regression_targets
+        for(int j = 0; j < bin_size; ++j){
+            int index = shapes_in_bin[i][j];
+            current_shapes[index] = current_shapes[index] * rotation;
+            regression_targets[index] = ProjectShape(ground_truth_shapes[index], bounding_box[index]) - ProjectShape(current_shapes[index], bounding_box[index]);
+            Mat_<double> temp_rotation;
+            double scale;
+            //normalize regression targets
+            SimilarityTransform(mean_shape, ProjectShape(current_shapes[index], bounding_box[index]), temp_rotation, scale);
+            regression_targets[index] = scale * regression_targets[index] * temp_rotation;
+        }
+    }
+
+    //计算每个bin的bin_output_detShape_;
+    bin_output_detShape_.resize(bin_num);
     for(int i = 0; i < bin_num; ++i){
         Mat_<double> temp = Mat::zeros(landmark_num_, 2, CV_64FC1);
         int bin_size = shapes_in_bin[i].size();
@@ -125,17 +162,18 @@ vector<Mat_<double> > Fern::Train(const vector<vector<double> > & candidate_pixe
             temp += regression_targets[index];
         }
         if(bin_size == 0){
-            bin_output_[i] = temp;
+            bin_output_detShape_[i] = temp;
             continue;
         }
         temp = (1.0 / ((1.0 + 1000.0 / bin_size) * bin_size)) * temp;
-        bin_output_[i] = temp;
+        bin_output_detShape_[i] = temp;
         for(int j = 0; j < bin_size; ++j){
             int index = shapes_in_bin[i][j];
-            prediction[index] = temp;
+            regression_targets[index] -= temp;
+            current_shapes[index] = temp + ProjectShape(current_shapes[index], bounding_box[index]);
+            current_shapes[index] = ReProjectShape(current_shapes[index], bounding_box[index]);
         }
     }
-    return prediction;
 }
 
 void Fern::Write(ofstream & fout){
@@ -148,11 +186,82 @@ void Fern::Write(ofstream & fout){
         fout<<selected_nearest_landmark_index_(i, 1)<<endl;
         fout<<threshold_(i)<<endl;
     }
-    for(int i = 0; i < bin_output_.size(); ++i){
-        for(int j = 0; j < bin_output_[i].rows; ++j){
-            fout<<bin_output_[i](j, 0)<<" "<<bin_output_[i](j, 1)<<" ";
+    for(int i = 0; i < bin_output_detShape_.size(); ++i){
+        fout<<bin_output_detTheta_[i]<<endl;
+        for(int j = 0; j < bin_output_detShape_[i].rows; ++j){
+            fout<<bin_output_detShape_[i](j, 0)<<" "<<bin_output_detShape_[i](j, 1)<<" ";
         }
         fout<<endl;
     }
 }
 
+void Fern::Read(ifstream & fin){
+    fin>>fern_pixel_num_;
+    fin>>landmark_num_;
+    selected_nearest_landmark_index_.create(fern_pixel_num_, 2);
+    selected_pixel_locations_.create(fern_pixel_num_, 4);
+    threshold_.create(fern_pixel_num_, 1);
+    
+    for(int i = 0; i < fern_pixel_num_; ++i){
+        fin>>selected_pixel_locations_(i, 0)>>selected_pixel_locations_(i, 1)
+            >>selected_pixel_locations_(i, 2)>>selected_pixel_locations_(i, 3);
+        fin>>selected_nearest_landmark_index_(i, 0)>>selected_nearest_landmark_index_(i, 1);
+        fin>>threshold_(i);
+    }
+
+    int bin_num = pow(2.0, fern_pixel_num_);
+    bin_output_detTheta_.resize(bin_num);
+    for(int i = 0; i < bin_num; ++i){
+        Mat_<double> temp(landmark_num_, 2);
+        fin>>bin_output_detTheta_[i];
+        for(int j = 0; j < landmark_num_; ++j){
+            fin>>temp(j, 0)>>temp(j, 1);
+        }
+        bin_output_detShape_.push_back(temp);
+    }
+}
+
+void Fern::Predict(const Mat_<uchar> & image, const BoundingBox & bounding_box, const Mat_<double> & mean_shape, 
+        Mat_<double> & shape){
+    Mat_<double> rotation;
+    double scale;
+    SimilarityTransform(ProjectShape(shape, bounding_box), mean_shape, rotation, scale);
+    int index = 0;
+    for(int i = 0; i < fern_pixel_num_; ++i){
+        int nearest_landmark_index_1 = selected_nearest_landmark_index_(i, 0);
+        int nearest_landmark_index_2 = selected_nearest_landmark_index_(i, 1);
+       
+        double x = selected_pixel_locations_(i, 0);
+        double y = selected_pixel_locations_(i, 1);
+        double project_x = scale * (x * rotation(0, 0) + y * rotation(1, 0)) * bounding_box.width / 2.0 
+            + shape(nearest_landmark_index_1, 0);
+        double project_y = scale * (x * rotation(0, 1) + y * rotation(1 ,1)) * bounding_box.height / 2.0 
+            + shape(nearest_landmark_index_1, 1);
+        project_x = std::max(0.0, std::min((double)project_x, image.cols - 1.0));
+        project_y = std::max(0.0, std::min((double)project_y, image.rows - 1.0));
+        double intensity_1 = (int)(image((int)project_y, (int)project_x));
+
+        x = selected_pixel_locations_(i, 2);
+        y = selected_pixel_locations_(i, 3);
+        project_x = scale * (x * rotation(0, 0) + y * rotation(1, 0)) * bounding_box.width / 2.0 
+            + shape(nearest_landmark_index_2, 0);
+        project_y = scale * (x * rotation(0, 1) + y * rotation(1, 1)) * bounding_box.height / 2.0
+            + shape(nearest_landmark_index_2, 1);
+        project_x = std::max(0.0, std::min((double)project_x, image.cols - 1.0));
+        project_y = std::max(0.0, std::min((double)project_y, image.rows - 1.0));
+        double intensity_2 = (int)(image((int)project_y, (int)project_x));
+    
+        if(intensity_1 - intensity_2 >= threshold_(i)){
+            index += pow(2, i);
+        }
+    }
+
+    shape = ProjectShape(shape, bounding_box);
+    rotation(0, 0) = cos(bin_output_detTheta_[index] * PI / 180);
+    rotation(0, 1) = sin(bin_output_detTheta_[index] * PI / 180);
+    rotation(1, 0) = -sin(bin_output_detTheta_[index] * PI / 180);
+    rotation(1, 1) = cos(bin_output_detTheta_[index] * PI / 180);
+    shape = shape * rotation;
+    shape += bin_output_detShape_[index];
+    ReProjectShape(shape, bounding_box);
+}

@@ -9,8 +9,8 @@
 using namespace std;
 using namespace cv;
 
-vector<Mat_<double> > FernCascade::Train(const vector<Mat_<uchar> > & images,
-                const vector<Mat_<double> > & current_shapes,
+void FernCascade::Train(const vector<Mat_<uchar> > & images,
+                vector<Mat_<double> > & current_shapes,
                 const vector<Mat_<double> > & ground_truth_shapes,
                 const vector<BoundingBox> & bounding_box,
                 const Mat_<double> & mean_shape,
@@ -101,21 +101,19 @@ vector<Mat_<double> > FernCascade::Train(const vector<Mat_<uchar> > & images,
     }
 
     //训练二级分类器 Ferns
-    vector<Mat_<double> > prediction;
-    prediction.resize(regression_targets.size());
-    for(int i = 0; i < regression_targets.size(); ++i){
-        prediction[i] = Mat::zeros(mean_shape.rows, 2, CV_64FC1);
-    }
     ferns_.resize(second_level_num);
     clock_t t = clock();
     for(int i = 0; i < second_level_num; ++i){
-        vector<Mat_<double> > temp = ferns_[i].Train(densities, covariance, candidate_pixel_locations,
-                nearest_landmark_index, regression_targets, fern_pixel_num);
-        //update regression targets
-        for(int j = 0; j < temp.size(); ++j){
-            prediction[j] += temp[j];
-            regression_targets[j] -= temp[j];
-        }
+        ferns_[i].Train(densities,
+                        covariance, 
+                        candidate_pixel_locations, 
+                        nearest_landmark_index,
+                        ground_truth_shapes, 
+                        current_shapes, 
+                        bounding_box, 
+                        mean_shape, 
+                        regression_targets, 
+                        fern_pixel_num);
         if((i + 1) % 50 == 0){
             cout<<"Fern cascades: " << curr_level_num << " out of " << first_level_num<<";"<<endl;
             cout<<"Ferns: "<< i + 1 << " out of "<<second_level_num<<endl;
@@ -126,19 +124,28 @@ vector<Mat_<double> > FernCascade::Train(const vector<Mat_<uchar> > & images,
             t = clock();
         }
     }
-
-    for(int i = 0; i < prediction.size(); ++i){
-        Mat_<double> rotation;
-        double scale;
-        SimilarityTransform(ProjectShape(current_shapes[i], bounding_box[i]), mean_shape, rotation, scale);
-        prediction[i] = scale * prediction[i] * rotation;
-    }
-    return prediction;
 }
 
 void FernCascade::Write(ofstream & fout){
     fout<<second_level_num_<<endl;
     for(int i = 0; i < second_level_num_; ++i){
         ferns_[i].Write(fout);
+    }
+}
+
+void FernCascade::Read(ifstream & fin){
+    fin>>second_level_num_;
+    ferns_.resize(second_level_num_);
+    for(int i = 0; i < second_level_num_; ++i){
+        ferns_[i].Read(fin);
+    }
+}
+
+void FernCascade::Predict(const Mat_<uchar> & image,
+            const BoundingBox & bounding_box,
+            const Mat_<double> & mean_shape,
+            Mat_<double> & shape){
+    for(int i = 0; i < second_level_num_; ++i){
+        ferns_[i].Predict(image, bounding_box, mean_shape, shape);
     }
 }

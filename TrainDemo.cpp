@@ -13,10 +13,10 @@ int main(){
     int img_num = 1345;
     int candidate_pixel_num = 400;
     int fern_pixel_num = 5;
-    int first_level_num = 20;
+    int first_level_num = 10;
     int second_level_num = 500;
     int landmark_num = 29;
-    int initial_number = 30;
+    int initial_number = 20;
     vector<Mat_<uchar> > images;
 
     cout<<"Read images..."<<endl;
@@ -36,8 +36,8 @@ int main(){
     for(int i = 0; i < img_num; ++i){
         BoundingBox temp;
         fin>>temp.start_x>>temp.start_y>>temp.width>>temp.height;
-        temp.centroid_x = temp.start_x + temp.width /2.0;
-        temp.centroid_y = temp.start_y + temp.width /2.0;
+        temp.centroid_x = temp.start_x + temp.width / 2.0;
+        temp.centroid_y = temp.start_y + temp.height / 2.0;
         bounding_box.push_back(temp);
     }
     fin.close();
@@ -58,7 +58,7 @@ int main(){
     ShapeRegressor regressor;
     regressor.Train(images, ground_truth_shapes, bounding_box, first_level_num, second_level_num,
                    candidate_pixel_num, fern_pixel_num, initial_number);
-    regressor.Save("./Data/MODEL/model_1.txt");
+    regressor.Save("./Data/MODEL/model_0.txt");
     
     return 0;
 }
